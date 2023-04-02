@@ -13,8 +13,8 @@ public:
   ~ThreadPool();
   bool Append(T* request);      // 往请求队列中添加任务
   // 工作线程运行的函数，它不断从工作队列中取出任务并执行
-  void* worker(void* args);   
-  void run();                   
+  static void* Worker(void* args);   
+  void Run();                   
 private:
   int thread_numbers_;        // 线程的数量
   pthread_t* threads_;        // 线程池中的线程数组
@@ -28,14 +28,15 @@ private:
 template <class T>
 ThreadPool<T>::ThreadPool(int thread_number, int max_requests) : 
   thread_numbers_(thread_number), max_requests_(max_requests), is_stop_(false), 
-  threads_(nullptr) {
+  threads_(NULL) {
   if (thread_number <= 0 || max_requests <= 0) {
     throw std::exception();
   }
   // 初始化线程池中的线程数组
   threads_ = new pthread_t[thread_number];
   for (int i = 0; i < thread_number; ++i) {
-    if (pthread_create(threads_[i], NULL, worker, this) != 0) {  // 创建对应线程池中的线程
+    printf("create the %dth thread\n", i);
+    if (pthread_create(threads_+i, NULL, Worker, this) != 0) {  // 创建对应线程池中的线程
       delete[] threads_;
       throw std::exception();
     }
@@ -68,14 +69,14 @@ bool ThreadPool<T>::Append(T* requests) {
 }
 
 template <class T>
-void* ThreadPool<T>::worker(void* args) {
+void* ThreadPool<T>::Worker(void* args) {
   ThreadPool* pool = (ThreadPool*)args;  // 传入的this指针
-  pool->run();                           // 运行线程池处理任务
+  pool->Run();                           // 运行线程池处理任务
   return pool;
 }
 
 template <class T>
-void ThreadPool<T>::run() {
+void ThreadPool<T>::Run() {
   while (!is_stop_) {
     queuestat_.Wait();                    // 工作线程休眠等待有任务唤醒
     queuelock_.Lock();
@@ -86,7 +87,7 @@ void ThreadPool<T>::run() {
     T* request = workqueue_.front();      // 从工作队列中取任务(函数)
     workqueue_.pop_front();               
     queuelock_.UnLock();
-    request->process();                   // 工作线程处理任务
+    request->Process();                   // 工作线程处理任务
   }
 }
 #endif

@@ -40,8 +40,12 @@ private:
 
 class Sem {
 public:
-  Sem(int num, int pshared = 0) {
-    if (sem_init(&sem_, pshared, num) != 0)
+  Sem() {
+    if (sem_init(&sem_, 0, 0) != 0)
+      throw std::exception();
+  }
+  Sem(int num) {
+    if (sem_init(&sem_, 0, num) != 0)
       throw std::exception();
   }
   ~Sem() {
