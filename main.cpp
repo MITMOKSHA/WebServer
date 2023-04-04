@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
 
   while (true) {
     // num为就绪的事件数
-    int num = epoll_wait(epollfd, events, MAX_EVENT_NUM, -1);
+    int num = epoll_wait(epollfd, events, MAX_EVENT_NUM, -1);  // 主线程注册就绪事件
     if (num < 0 && errno != EINTR)  {
       perror("epoll failure\n");
       break;
@@ -138,9 +138,10 @@ int main(int argc, char** argv) {
         // 对方异常断开或者错误等事件
         users[sockfd].CloseConn();
       } else if (events[i].events & EPOLLIN) {
-        if (users[sockfd].Read()) {      // 模拟proactor模式，由主线程来处理I/O，工作线程处理逻辑
+        // 模拟Preactor模式，由主线程来处理I/O，工作线程处理业务逻辑(Process)
+        if (users[sockfd].Read()) {     
           // 一次性把所有数据都读完
-          pool->Append(&users[sockfd]);  // 追加到线程池中
+          pool->Append(&users[sockfd]);  // 主线程将事件放入请求队列中
         } else {
           users[sockfd].CloseConn();
         }
