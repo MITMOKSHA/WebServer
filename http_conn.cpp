@@ -151,7 +151,6 @@ bool HttpConn::Write() {
     // 更新变量
     bytes_have_send += bytes_num;
     if (bytes_to_send <= bytes_have_send) {
-      //TODO:
       // 发送HTTP响应成功，根据HTTP请求中的Connection字段决定是否立即关闭连接
       unmap();           // 释放资源文件映射的内存空间
       if (is_linger_) {  // 如果是长连接，就初始化当前连接
@@ -232,7 +231,6 @@ HttpConn::HTTP_CODE HttpConn::ProcessRead()
         }
       }
       case CHECK_STATE_CONTENT: {
-        TODO:
         ret = ParseContent(text);
         if (ret == GET_REQUEST) {
           return DoRequest();

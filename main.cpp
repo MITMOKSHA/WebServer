@@ -30,7 +30,7 @@ extern void Addfd(int epollfd, int fd, bool one_shot, bool et);
 extern void Modfd(int epollfd, int fd, int ev);
 
 // 添加信号捕捉
-void addsig(int sig, void(handler)(int)) {
+void Addsig(int sig, void(handler)(int)) {
   struct sigaction sa;
   bzero(&sa, sizeof(sa));     // 初始化
   // handler可以指定为SIG_IGN和SIG_DFL
@@ -50,9 +50,9 @@ int main(int argc, char** argv) {
 
   int port = atoi(argv[1]);
 
-  // 若网路对端断开了，还往对端去些数据，会产生SIGPIPE(需要进行处理)
+  // 若网路对端断开了，还往对端去写数据，会产生SIGPIPE(需要进行处理)
   // 对SIGPIPE进行处理
-  addsig(SIGPIPE, SIG_IGN);  // 因为SIGPIPE默认情况下会终止进程，我们直接不处理(设置为SIG_IGN)
+  Addsig(SIGPIPE, SIG_IGN);  // 因为SIGPIPE默认情况下会终止进程，直接忽略(设置为SIG_IGN)
 
   // 创建线程池，并初始化
   ThreadPool<HttpConn>* pool = NULL;
