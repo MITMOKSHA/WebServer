@@ -35,7 +35,7 @@ ThreadPool<T>::ThreadPool(int thread_number, int max_requests) :
   // 初始化线程池中的线程数组
   threads_ = new pthread_t[thread_number];
   for (int i = 0; i < thread_number; ++i) {
-    printf("create the %dth thread\n", i);
+    printf("在线程池中创建第%d个线程\n", i);
     if (pthread_create(threads_+i, NULL, Worker, this) != 0) {  // 创建对应线程池中的线程
       delete[] threads_;
       throw std::exception();
@@ -84,6 +84,7 @@ void ThreadPool<T>::Run() {
       queuelock_.UnLock();
       continue;
     }
+    // 在当前场景下request就是HTTP连接的一个指针
     T* request = workqueue_.front();      // 从工作队列中取任务(函数)
     workqueue_.pop_front();               
     queuelock_.UnLock();

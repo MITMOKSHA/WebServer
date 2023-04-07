@@ -7,6 +7,6 @@ locker.o : locker.h
 http_conn.o: http_conn.h locker.h
 main.o : locker.h http_conn.h threadpool.h
 
-PHONY: clean
+.PHONY: clean
 clean:
 	rm server *.o

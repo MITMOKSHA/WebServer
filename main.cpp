@@ -24,7 +24,7 @@
 extern void Delfd(int epollfd, int fd);
 
 // 添加文件描述符到epoll中
-extern void Addfd(int epollfd, int fd, bool one_shot);
+extern void Addfd(int epollfd, int fd, bool one_shot, bool et);
 
 // 修改文件描述符，重置socket上EPOLLONESHOT事件(只触发一次)，以确保下一次可读时，EPOLLIN事件被触法
 extern void Modfd(int epollfd, int fd, int ev);
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
   }
   
   // 将监听的文件描述符添加到epoll对象中
-  Addfd(epollfd, listenfd, false);
+  Addfd(epollfd, listenfd, false, false);
   HttpConn::epollfd_ = epollfd;
 
   while (true) {
@@ -141,15 +141,13 @@ int main(int argc, char** argv) {
         // 模拟Preactor模式，由主线程来处理I/O，工作线程处理业务逻辑(Process)
         if (users[sockfd].Read()) {     
           // 一次性把所有数据都读完
-          pool->Append(&users[sockfd]);  // 主线程将事件放入请求队列中
+          pool->Append(&users[sockfd]);  // 主线程将事件放入请求队列交给工作线程中
         } else {
           users[sockfd].CloseConn();
         }
       } else if (events[i].events & EPOLLOUT) {
         if (!users[sockfd].Write()) {  // 一次性写完所有数据
-
-        } else {
-          users[sockfd].CloseConn();
+          users[sockfd].CloseConn();   // 关闭当前socket释放资源
         }
       }
     }

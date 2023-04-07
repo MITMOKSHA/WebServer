@@ -2,3 +2,5 @@
 *.o
 # 忽略可执行文件
 server
+# 忽略vscode配置文件
+.vscode
