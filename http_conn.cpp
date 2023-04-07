@@ -130,7 +130,7 @@ bool HttpConn::Write() {
   int bytes_num = 0;                 // 记录writev返回的写入的字节数
   int bytes_have_send = 0;           // 已经从写缓冲中发送给客户端的字节数
   int bytes_to_send = write_idx_;    // 写缓冲中的未发送数据(即未写入fd)的字节数
-  if (bytes_to_send = 0) {           
+  if (bytes_to_send == 0) {           
     // 写缓冲中无数据，说明服务器端并没有检测到争取的HTTP请求报文，又因为ET模式因此需要重新注册读就绪事件，并重新初始化连接
     Modfd(epollfd_, sockfd_, EPOLLIN);
     Init();   
@@ -148,8 +148,7 @@ bool HttpConn::Write() {
       unmap();  // 对资源文件映射到内存的部分进行释放
       return false;
     }
-    // 更新两个变量
-    bytes_to_send -= bytes_num;
+    // 更新变量
     bytes_have_send += bytes_num;
     if (bytes_to_send <= bytes_have_send) {
       //TODO:
