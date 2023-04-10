@@ -18,17 +18,21 @@
 #include <errno.h>
 #include <sys/uio.h>
 #include <sys/epoll.h>
+#include <assert.h>
 
 #include "locker.h"
-
+#include "timer.h"
 
 class HttpConn {
 public:
+  // 静态成员变量是共享的
   static int epollfd_;  // 所有的socket上的事件都被注册到同一个epollfd指向的内核事件表中
   static int user_count_;  // 统计用户的数量
   static const int READ_BUFFER_SIZE = 2048;
   static const int WRITE_BUFFER_SIZE = 1024;
   static const int FILENAME_LEN = 200;
+  static SortTimerList timer_list_;  // 定时器链表
+  static int timeslot_;               // 5s触发一次定时
   // HTTP请求放啊，但我们只支持GET
   // 默认情况下枚举值从0开始，然后递增
   enum METHOD {GET = 0, POST, HEAD, PUT, DELETE, TRACE, OPTIONS, CONNECT};
@@ -111,6 +115,7 @@ private:
   struct stat file_stat_;            // 资源文件的元数据结构体
   struct iovec iv_[2];               // 支持分散读/写
   int iv_count_;                     // 表示被写内存块的数量
+  Timer* timer_;                     // 属于连接的定时器
 };
 
 #endif

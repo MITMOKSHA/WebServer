@@ -1,11 +1,13 @@
 #include "http_conn.h"
 
 #define TEST 0  // 测试LOG宏
-#define LOG 1   // LOG宏
+#define LOG 0   // LOG宏
 
-
+// 初始化静态成员变量
 int HttpConn::epollfd_ = -1;
 int HttpConn::user_count_ = 0;
+int HttpConn::timeslot_ = 5;
+SortTimerList HttpConn::timer_list_;  // 定时器链表
 
 // 定义HTTP响应的一些状态信息
 const char* ok_200_title = "OK";
@@ -20,7 +22,23 @@ const char* error_500_form = "There was an unusual problem serving the requested
 // 网站根目录
 const char* doc_root = "/home/moksha/webserver/resources";  // 会自动加上字符串结束符
 
+void TimerHandler() {
+  // 收到SIGALARM时，调用的处理程序
+  // 调用Tick处理fd对应的超时的定时器
+  HttpConn::timer_list_.Tick();
+  alarm(HttpConn::timeslot_);  // 调用进程五秒收到一次SIGALARM信号(一次alarm调用只收到一次SIGALARM信号)
+}
+
+// 定时器回调函数，它将当前socket连接从epoll内核事件表中删除，并关闭该socket
+void CallBackFunc(int fd) {
+  epoll_ctl(HttpConn::epollfd_, EPOLL_CTL_DEL, fd, 0);
+  assert(fd >= 0);
+  close(fd);
+  printf("关闭客户端%d\n", fd);
+}
+
 // 设置文件描述符非阻塞
+
 int SetNonBlocking(int fd) {
   int old_option = fcntl(fd, F_GETFL);
   int new_option = O_NONBLOCK | old_option;
@@ -72,6 +90,14 @@ void HttpConn::Init(int sockfd, const sockaddr_in& addr) {
   user_count_++;
   
   Init();
+  // 为客户连接成功socket创建定时器，初始化当前连接的定时器
+  timer_ = new Timer;
+  timer_->sockfd_ = sockfd;
+  timer_->cb_func_ = CallBackFunc;
+  time_t cur = time(NULL);
+  timer_->expire_ = cur + 3 * timeslot_;
+  // 将该连接的定时器加入链表中
+  timer_list_.AddTimer(timer_);
 }
 
 void HttpConn::Init() {
@@ -97,13 +123,14 @@ void HttpConn::CloseConn() {
     Delfd(epollfd_, sockfd_);  // 从内核事件表中删除fd
     sockfd_ = -1;
     user_count_--;  // 减少总的用户数
+    timer_ = nullptr;  // 重置定时器
   }
 }
 
 bool HttpConn::Read() {
   if (read_idx_ >= READ_BUFFER_SIZE) {
     return false;
-  }
+  };
   // 读取到的字节
   int bytes_read = 0;
   while (true) {  // ET模式要一直读
@@ -112,13 +139,31 @@ bool HttpConn::Read() {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         // 没有数据
         break;  // 退出读循环
+      } else {
+        // 读错误，则关闭连接，并移除相应的定时器(不需要等到超时才移除)
+        CallBackFunc(sockfd_);
+        if (timer_) {
+          timer_list_.DelTimer(timer_);
+        }
+        return false;
       }
-      return false;  // 出错了
     } else if (bytes_read == 0) {  // EOF
       // 对方关闭连接
+      CallBackFunc(sockfd_);
+      if (timer_) {
+        timer_list_.DelTimer(timer_);
+      }
       return false;
+    } else {
+      // 客户端上有数据可读需要再调整该链接对应的定时器，以延迟该连接被关闭的时间
+      if (timer_) {
+        time_t cur = time(NULL);  // 获取系统当前时间
+        timer_->expire_ = cur + 3 * timeslot_;  // 调正该用户的绝对超时时间
+        printf("调整一次定时器的时间\n");
+        timer_list_.AdjustTimer(timer_);
+      }
+      read_idx_ += bytes_read;
     }
-    read_idx_ += bytes_read;
   }
 #if LOG
   printf("\n读取到了HTTP请求报文:\n%s", read_buf_);

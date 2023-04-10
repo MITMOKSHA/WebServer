@@ -11,6 +11,7 @@
 #include <exception>
 #include <sys/epoll.h>
 #include <signal.h>
+#include <assert.h>
 
 #include "locker.h"
 #include "threadpool.h"
@@ -18,6 +19,8 @@
 
 #define MAX_FD 65535             // 最大的文件名描述符个数
 #define MAX_EVENT_NUM 10000      // epoll最大监听事件数量
+
+static int pipefd[2];  // 用于读写信号的管道
 
 // extern声明http_conn中定义的函数
 // 从epoll中删除文件描述符
@@ -29,12 +32,24 @@ extern void Addfd(int epollfd, int fd, bool one_shot, bool et);
 // 修改文件描述符，重置socket上EPOLLONESHOT事件(只触发一次)，以确保下一次可读时，EPOLLIN事件被触法
 extern void Modfd(int epollfd, int fd, int ev);
 
+extern int SetNonBlocking(int fd);
+
+extern void TimerHandler();
+
+void SigHandler(int sig) {
+  int save_errno = errno;
+  int msg = sig;
+  send(pipefd[1], (char*)&msg, 1, 0);
+  errno = save_errno;
+}
+
 // 添加信号捕捉
-void Addsig(int sig, void(handler)(int)) {
+void AddSig(int sig, void(handler)(int)) {
   struct sigaction sa;
   bzero(&sa, sizeof(sa));     // 初始化
   // handler可以指定为SIG_IGN和SIG_DFL
   sa.sa_handler = handler;    // 设置信号处理函数
+  sa.sa_flags |= SA_RESTART;  // 系统调用被中断后可以自动重启
   sigfillset(&sa.sa_mask);    // 设置信号集中的所有信号(即调用处理程序时不允许其他信号中断处理程序的执行)
   // 对sig信号绑定一个sigaction结构体(指定处理函数sa_handler和执行处理程序时阻塞的信号集sa_mask)
   sigaction(sig, &sa, NULL);  
@@ -47,12 +62,7 @@ int main(int argc, char** argv) {
     printf("请按照如下格式运行：%s 端口号\n", basename(argv[0]));
     exit(-1);
   }
-
   int port = atoi(argv[1]);
-
-  // 若网路对端断开了，还往对端去写数据，会产生SIGPIPE(需要进行处理)
-  // 对SIGPIPE进行处理
-  Addsig(SIGPIPE, SIG_IGN);  // 因为SIGPIPE默认情况下会终止进程，直接忽略(设置为SIG_IGN)
 
   // 创建线程池，并初始化
   ThreadPool<HttpConn>* pool = NULL;
@@ -102,12 +112,29 @@ int main(int argc, char** argv) {
     perror("epoll create error\n");
     exit(-1);
   }
-  
+
+  // 创建管道
+  ret = socketpair(PF_UNIX, SOCK_STREAM, 0, pipefd);
+  assert(ret != -1);
+  // 将管道写端fd置为非阻塞，并将读端fd加入epoll内核事件表中
+  SetNonBlocking(pipefd[1]);
+  Addfd(epollfd, pipefd[0], false, false);
   // 将监听的文件描述符添加到epoll对象中
   Addfd(epollfd, listenfd, false, false);
+
+  // 若网路对端断开了，还往对端去写数据，会产生SIGPIPE(需要进行处理)
+  // 对SIGPIPE进行处理
+  AddSig(SIGPIPE, SIG_IGN);  // 因为SIGPIPE默认情况下会终止进程，直接忽略(设置为SIG_IGN)
+  AddSig(SIGALRM, SigHandler);
+  AddSig(SIGTERM, SigHandler);
+  // 是否终止服务器的运行
+  bool stop_server = false;
+  bool timeout = false;
+  alarm(HttpConn::timeslot_);
+
   HttpConn::epollfd_ = epollfd;
 
-  while (true) {
+  while (!stop_server) {
     // num为就绪的事件数
     int num = epoll_wait(epollfd, events, MAX_EVENT_NUM, -1);  // 主线程注册就绪事件
     if (num < 0 && errno != EINTR)  {
@@ -130,6 +157,7 @@ int main(int argc, char** argv) {
         if (HttpConn::user_count_ >= MAX_FD) {
           // 目前的连接数满了，给客户端提示信息：服务器正忙
           close(connfd);
+          printf("服务器正忙\n");
           continue;
         }
         // 将新的客户的数据初始化，放到数组中
@@ -137,6 +165,37 @@ int main(int argc, char** argv) {
       } else if (events[i].events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)) {
         // 对方异常断开或者错误等事件
         users[sockfd].CloseConn();
+      } else if (events[i].events & EPOLLOUT) {
+        if (!users[sockfd].Write()) {  // 一次性写完所有数据
+          users[sockfd].CloseConn();   // 关闭当前socket释放资源
+        }
+      } else if ((sockfd == pipefd[0]) && (events[i].events & EPOLLIN)) {
+        // 处理信号(管道读端有数据)
+        // int sig;  // linux标准信号编号为1~31用一个整型32bit就可以通过掩码区分出具体的信号了
+        char signals[1024];  // 读缓冲区的大小
+        ret = recv(pipefd[0], signals, sizeof(signals), 0);
+        if (ret == -1) {
+          // 错误
+          continue;
+        } else if (ret == 0) {
+          // 对端关闭
+          continue;
+        } else {
+          for (int i = 0; i < ret; ++i) {
+            // 每个信号值占一个字节(1~31)
+            switch (signals[i]) {
+              case SIGALRM: {
+                // 超时(这里只是标记以下并不马上处理)
+                timeout = true;
+                break;
+              }
+              case SIGTERM: {
+                // 终止server事件循环的运行
+                stop_server = true;
+              }
+            }
+          }
+        }
       } else if (events[i].events & EPOLLIN) {
         // 模拟Preactor模式，由主线程来处理I/O，工作线程处理业务逻辑(Process)
         if (users[sockfd].Read()) {     
@@ -145,11 +204,11 @@ int main(int argc, char** argv) {
         } else {
           users[sockfd].CloseConn();
         }
-      } else if (events[i].events & EPOLLOUT) {
-        if (!users[sockfd].Write()) {  // 一次性写完所有数据
-          users[sockfd].CloseConn();   // 关闭当前socket释放资源
-        }
       }
+    }
+    if (timeout) {
+      TimerHandler();
+      timeout = false;
     }
   }
   // 释放所有资源
